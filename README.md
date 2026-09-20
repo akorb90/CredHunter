@@ -1,5 +1,8 @@
 # CredHunter
 
+> [!WARNING]
+> **AI-coded project:** CredHunter is developed with the assistance of generative AI. The code may contain bugs, false positives, false negatives, or unexpected behavior. Review and test the code before relying on it in security-sensitive environments.
+
 CredHunter is a lightweight, read-only Bash utility for discovering credentials and secret material in files on Linux systems.
 
 It is intended for authorized security assessments, CTF/lab environments, incident response, and system auditing where a fast credential-focused filesystem review is useful without installing a larger framework.
