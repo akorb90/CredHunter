@@ -66,8 +66,8 @@ AWS_ACCESS_KEY_RE='AKIA[0-9A-Z]{16}'
 GITHUB_TOKEN_RE='(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}'
 AUTH_HEADER_RE='Authorization:[[:space:]]*(Basic|Bearer)[[:space:]]+[A-Za-z0-9._~+/-]{8,}'
 JWT_RE='eyJ[A-Za-z0-9_-]{5,}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{10,}'
-STRICT_CREDENTIAL_RE='(password|passwd|passphrase|client[_-]?secret|api[_-]?key|secret[_-]?key|access[_-]?token|refresh[_-]?token)[[:space:]]*[:=][[:space:]]*["'\'']?[^[:space:]"'\'']{6,}'
-GENERIC_CREDENTIAL_RE='(password|passwd|pwd|passphrase|secret|token|credential|api[_-]?key|access[_-]?key|secret[_-]?key|auth[_-]?token|access[_-]?token|refresh[_-]?token)[[:space:]]*[:=][[:space:]]*[^[:space:]]{4,}'
+STRICT_CREDENTIAL_RE='([A-Za-z0-9_.-]*(password|passwd|passphrase|client[_-]?secret|api[_-]?key|secret[_-]?key|access[_-]?token|refresh[_-]?token)[A-Za-z0-9_.-]*)[[:space:]]*[:=][[:space:]]*["'\'']?[^[:space:]"'\'']{6,}'
+GENERIC_CREDENTIAL_RE='([A-Za-z0-9_.-]*(password|passwd|pwd|passphrase|secret|token|credential|api[_-]?key|access[_-]?key|secret[_-]?key|auth[_-]?token|access[_-]?token|refresh[_-]?token)[A-Za-z0-9_.-]*)[[:space:]]*[:=][[:space:]]*[^[:space:]]{4,}'
 
 MODE="${1:-}"
 [[ -n "$MODE" ]] && shift
@@ -75,6 +75,8 @@ MODE="${1:-}"
 ROOTS=()
 SHOW_LOW=false
 REALLY_ALL=false
+
+declare -A SEEN_FINDINGS=()
 
 while (($#)); do
     case "$1" in
@@ -148,6 +150,54 @@ is_placeholder_line() {
     return 1
 }
 
+extract_finding_value() {
+    local rule="$1" line="$2" content value
+    content="${line#*:}"
+
+    case "$rule" in
+        "AWS access key")
+            value=$(printf '%s\n' "$content" | LC_ALL=C grep -aoE -- "$AWS_ACCESS_KEY_RE" | head -n 1)
+            ;;
+        "GitHub token")
+            value=$(printf '%s\n' "$content" | LC_ALL=C grep -aoE -- "$GITHUB_TOKEN_RE" | head -n 1)
+            ;;
+        "JWT")
+            value=$(printf '%s\n' "$content" | LC_ALL=C grep -aoE -- "$JWT_RE" | head -n 1)
+            ;;
+        "Authorization header")
+            value=$(printf '%s\n' "$content" | LC_ALL=C grep -aioE -- "$AUTH_HEADER_RE" | head -n 1)
+            ;;
+        "Credential connection string")
+            value=$(printf '%s\n' "$content" | LC_ALL=C grep -aoE -- "$CONNECTION_RE" | head -n 1)
+            ;;
+        "Credential assignment"|"Generic credential")
+            value=$(printf '%s\n' "$content" | LC_ALL=C grep -aioE -- '([A-Za-z0-9_.-]*(password|passwd|pwd|passphrase|secret|token|credential|api[_-]?key|access[_-]?key|secret[_-]?key|auth[_-]?token|access[_-]?token|refresh[_-]?token)[A-Za-z0-9_.-]*)[[:space:]]*[:=][[:space:]]*["'\'']?[^[:space:]"'\'']{4,}' | head -n 1)
+            ;;
+        "Private key")
+            value="$content"
+            ;;
+        *)
+            value="$content"
+            ;;
+    esac
+
+    [[ -n "$value" ]] || value="$content"
+    printf '%s' "$value"
+}
+
+is_duplicate_finding() {
+    local rule="$1" line="$2" value key
+    value=$(extract_finding_value "$rule" "$line")
+    key="${rule}|${value}"
+
+    if [[ -n "${SEEN_FINDINGS[$key]+x}" ]]; then
+        return 0
+    fi
+
+    SEEN_FINDINGS["$key"]=1
+    return 1
+}
+
 print_finding() {
     local severity="$1" rule="$2" file="$3" line="$4"
     printf '\n[%s] %s\n' "$severity" "$rule"
@@ -175,6 +225,9 @@ scan_regex() {
     while IFS= read -r line; do
         [[ -n "$line" ]] || continue
         if [[ "$filter_placeholders" == true ]] && is_placeholder_line "$line"; then
+            continue
+        fi
+        if is_duplicate_finding "$rule" "$line"; then
             continue
         fi
         print_finding "$severity" "$rule" "$file" "$line"
